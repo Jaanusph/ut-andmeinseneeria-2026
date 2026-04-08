@@ -9,7 +9,7 @@ Skripti loogika on jagatud väikesteks sammudeks:
 3. lae vajadusel või eraldi käsuga dimensioonid;
 4. päri tellimused API-st;
 5. lae tellimused `staging` kihti;
-6. ehita `analytics` kihti päeva koondtulemus;
+6. ehita `analytics` kihti valitud päeva koondread uuesti;
 7. kirjuta iga sammu kohta logirida.
 
 Kui Python on sulle uus, loe faili selles järjekorras:
@@ -439,7 +439,7 @@ def fetch_orders_from_api(logical_date: date, source_mode: str, run_id: uuid.UUI
     try:
         # `response.json()` muudab JSON-vastuse Pythonis sõnastikuks või loendiks.
         payload = response.json()
-    except ValueError as exc:  # pragma: no cover - kaitse halbade vastuste vastu
+    except ValueError as exc:
         raise RuntimeError(f"API vastus ei olnud korrektne JSON: {exc}") from exc
 
     # Kui API vastas veakoodiga, muudame selle Pythonis veaks.
@@ -646,7 +646,11 @@ def load_orders(conn, run_id: uuid.UUID, logical_date: date, orders: list[dict])
 
 
 def rebuild_analytics_for_date(conn, run_id: uuid.UUID, logical_date: date) -> int:
-    """Ehita ühe päeva koondtulemus tabelisse `analytics.daily_product_sales`."""
+    """Ehita ühe päeva koondread uuesti tabelisse `analytics.daily_product_sales`.
+
+    Siin ei arvuta me tulemust üle kõigi päevade korraga.
+    Iga käivitus kustutab ja ehitab uuesti ainult etteantud päeva read.
+    """
     started_at = now_local()
     rebuilt_at = now_local()
     try:
@@ -764,7 +768,7 @@ def run_pipeline_for_date(
     orders = extract_orders_with_retry(conn, run_id, logical_date, source_mode)
     # 3. kirjutame tellimused staging kihti
     load_orders(conn, run_id, logical_date, orders)
-    # 4. ehitame selle päeva koondtulemuse analytics kihti
+    # 4. ehitame selle päeva koondread analytics kihti uuesti
     rebuild_analytics_for_date(conn, run_id, logical_date)
     log(f"Töövoog kuupäevale {logical_date.isoformat()} sai valmis.")
 

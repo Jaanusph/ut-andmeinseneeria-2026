@@ -51,7 +51,7 @@ Praktikumi lõpuks näed läbi terve tööahela:
 Praktikumi lõpuks oskad:
 
 - käivitada `docker compose` abil väikese orkestreerimise praktikumi keskkonna;
-- selgitada, mida teeb `cron`-avaldis `*/2 * * * *`;
+- selgitada, mida teeb `cron`-avaldis `*/5 * * * *`;
 - värskendada dimensioone eraldi käsuga;
 - käivitada töövoogu käsitsi etteantud loogilise kuupäevaga;
 - kontrollida logifailist ja logitabelist, mis sammus toru parajasti on;
@@ -67,7 +67,7 @@ See aeg jaguneb ligikaudu nii:
 - 20 min keskkonna käivitamiseks ja failidega tutvumiseks;
 - 20 min allikate ja skeemide läbivaatamiseks;
 - 25 min käsikäivituse ja tulemuse kontrolli jaoks;
-- 20 min idempotentsuse ja `retry` demo jaoks;
+- 20 min idempotentsuse ja `retry` näite jaoks;
 - 20 min `backfill` ja inkrementaalse töörežiimi jaoks;
 - 15 min `cron`-i logifaili ja tõrkeotsingu jaoks.
 
@@ -142,7 +142,7 @@ Kõik allpool toodud suhtelised failiteed eeldavad, et asud kaustas `04-andmetor
 - [`compose.yml`](./compose.yml) kirjeldab kolme teenust: andmebaasi, kohalikku `API`-t ja `cron`-ajastajat ehk `scheduler` teenust
 - [`.env.example`](./.env.example) sisaldab praktikumi vaikimisi keskkonnamuutujaid
 - [`Dockerfile.scheduler`](./Dockerfile.scheduler) ehitab scheduler'i konteineri, kuhu paigaldatakse `cron`, `psql` klient ja Pythoni teegid
-- [`init/01_create_objects.sql`](./init/01_create_objects.sql) loob skeemid, tabelid ja `intermediate` vaate
+- [`init/01_create_objects.sql`](./init/01_create_objects.sql) loob skeemid, tabelid ja `intermediate` vaate, kui andmebaas esimest korda initsialiseeritakse
 - [`source_api/server.py`](./source_api/server.py) käivitab kohaliku tellimuste `API`
 - [`source_data/products.csv`](./source_data/products.csv) sisaldab tootedimensiooni lähteandmeid
 - [`source_data/stores.csv`](./source_data/stores.csv) sisaldab poedimensiooni lähteandmeid
@@ -151,6 +151,7 @@ Kõik allpool toodud suhtelised failiteed eeldavad, et asud kaustas `04-andmetor
 - [`scripts/requirements.txt`](./scripts/requirements.txt) loetleb scheduler'i Pythoni sõltuvused
 - [`scheduler/crontab`](./scheduler/crontab) määrab `cron`-i ajastuse ja käivitatava käsu
 - [`scheduler/entrypoint.sh`](./scheduler/entrypoint.sh) paigaldab `crontab` faili ja käivitab `cron` teenuse
+- [`lisad/lisaharjutuste_naidislahendused.md`](./lisad/lisaharjutuste_naidislahendused.md) koondab lisaharjutuste ühe võimaliku näidismõtte
 - [`logs/.gitkeep`](./logs/.gitkeep) hoiab logide kausta repos olemas
 
 ## Kus praktikumi failid asuvad?
@@ -205,12 +206,12 @@ Selles praktikumis keskendume just sellele kihile. Andmetorust saab töövoog, m
 
 ## Miks siin `cron`, mitte Airflow?
 
-Siin praktikumis on töövoog teadlikult väike ja lineaarne:
+Selles praktikumis on töövoog väike ja lineaarne:
 
 1. lae dimensioonid, kui vaja;
 2. päri tellimused;
 3. lae need `staging` kihti;
-4. ehita päeva koondtulemus `analytics` kihti.
+4. ehita valitud päeva koondread `analytics` kihti uuesti.
 
 Selle jaoks sobib `cron` hästi.
 
@@ -266,12 +267,13 @@ See plokk on lugemiseks ja meeldejätmiseks.
 # 1-5     = vahemik 1 kuni 5
 # 1,3,5   = loetelu ehk mitu eraldi väärtust
 
-*/2 * * * *    # iga 2 minuti tagant
-0 */3 * * *    # iga 3 tunni järel täistunnil
-5 6 * * *      # iga päev kell 06:05
-15 9 * * 1-5   # tööpäeviti kell 09:15
-0 8 1 * *      # iga kuu 1. päeval kell 08:00
-0 8 * * 1,3,5  # esmaspäeval, kolmapäeval ja reedel kell 08:00
+*/2 * * * *     # iga 2 minuti tagant
+10-59/2 * * * * # alates minutist 10 iga 2 minuti tagant
+0 */3 * * *     # iga 3 tunni järel täistunnil
+5 6 * * *       # iga päev kell 06:05
+15 9 * * 1-5    # tööpäeviti kell 09:15
+0 8 1 * *       # iga kuu 1. päeval kell 08:00
+0 8 * * 1,3,5   # esmaspäeval, kolmapäeval ja reedel kell 08:00
 ```
 
 Oluline tähelepanek märgi `/` kohta:
@@ -329,6 +331,18 @@ See käsk on kuju näitamiseks. Päris `backfill`-i teeme sammus 11.
 docker compose exec scheduler python scripts/orchestrate.py backfill --from-date YYYY-MM-DD --to-date YYYY-MM-DD
 ```
 
+### Bootstrap
+
+Enne kui töövoog saab päriselt jooksma hakata, on vaja minimaalset algseadistust.
+
+`Bootstrap` tähendabki süsteemi esmast ettevalmistust nii, et ülejäänud osad saaksid pärast selle najal tööle minna.
+
+Selles praktikumis tähendab see, et andmebaas loob esimesel käivitamisel vajalikud skeemid, tabelid ja vaate faili `init/01_create_objects.sql` põhjal.
+
+Mõnikord kohtad seda sõna ka kujul “andmebaasi bootstrap” või “töövoo bootstrap”.
+
+Ääremärkusena on sõna taustaks tuntud väljend “to pull oneself up by one’s bootstraps”. Algselt oli see pigem võimatu enese üles tõmbamise kujund. Arvutimaailmas hakati selle all hiljem mõistma väikest alglaadimist (booting), millest ülejäänud süsteem käima läheb.
+
 ### Inkrementaalne töörežiim
 
 Kui kõiki päevi pole vaja igal käivitusel uuesti töödelda, on mõistlik eristada kahte olukorda:
@@ -357,9 +371,11 @@ Selles praktikumis:
 - logifail asub scheduler'i konteineris failis `/var/log/praktikum/pipeline.log`;
 - logitabel on tabel `staging.pipeline_run_log`.
 
+Selles praktikumis on seire passiivne. Meie vaatame logifaili ja logitabelit ise. Töövoog ei saada veel ise interaktiivset teavitust ehk automaatset e-kirja, Slacki sõnumit või muud teadet, kui töövoog lõpeb veaga.
+
 ## ETL etapid selles praktikumis
 
-Ka siin praktikumis hoiame nähtaval kihtide rolli.
+Selles praktikumis hoiame nähtaval kihtide rolli.
 
 1. `staging`
    Dimensioonid laaditakse võimalikult allikalähedaselt tabelitesse `products_raw` ja `stores_raw`.
@@ -369,7 +385,7 @@ Ka siin praktikumis hoiame nähtaval kihtide rolli.
    Vaade `intermediate.orders_enriched` seob tellimused toodete ja poodidega ning arvutab rea kogusumma.
 
 3. `analytics`
-   Tabel `analytics.daily_product_sales` annab päeva, poe ja toote lõikes valmis koondtulemuse.
+   Tabel `analytics.daily_product_sales` hoiab iga töödeldud päeva koondridu päeva, poe ja toote lõikes.
 
 See on kooskõlas põhimõttega, et kiht kirjeldab andmete rolli, mitte tehnoloogiat.
 Käsk `refresh-dimensions` jääb ainult `staging` kihti. Käsud `run-once`, `backfill` ja `run-scheduled` liiguvad sealt edasi `intermediate` ja `analytics` kihtidesse.
@@ -426,7 +442,7 @@ Ava fail `compose.yml` ja vaata üle kolm teenust:
 
 - `db` hoiab andmebaasi;
 - `source-api` simuleerib päevaseid tellimusi;
-- `scheduler` käivitab `cron`-i ja orkestreerija skripti.
+- `scheduler` käivitab `cron`-i ja läbi selle regulaarselt ka orkestreerija skripti.
 
 Vaata korraks ka järgmisi faile:
 
@@ -452,12 +468,19 @@ docker compose up -d --build
 ```
 
 Esimesel käivitamisel kulub rohkem aega, sest scheduler'i konteiner ehitatakse `Dockerfile.scheduler` põhjal.
+Esimesel andmebaasi käivitamisel tehakse ka andmebaasi algseadistus ehk bootstrap. `compose.yml` mountib kausta `init` andmebaasi konteinerisse teele `/docker-entrypoint-initdb.d` ja andmebaas loeb sealt faili `01_create_objects.sql`.
+Selle tulemusel luuakse skeemid `staging`, `intermediate` ja `analytics`, vajalikud tabelid ning vaade `intermediate.orders_enriched`.
+Kui andmebaasi maht jääb alles, siis seda algseadistust automaatselt uuesti ei tehta.
 
 Oodatav tulemus:
 
 - andmebaasi konteiner käivitub;
 - kohalik `API` käivitub pordil `8014`;
 - scheduler käivitab `cron` teenuse taustal.
+
+Oluline tähelepanek: kui scheduler on käivitunud, siis hakkab `cron` oma vaikeloogikat kohe taustal jooksutama.
+See tähendab, et selleks ajaks, kui jõuad sammu 7, võivad dimensioonid olla juba laaditud, mitu valmis päeva juba töödeldud ja `analytics` kihis võib olla rohkem kui ühe päeva koondridu.
+See on selles praktikumis normaalne. Samm 7 ei eelda täiesti tühja algseisu, vaid aitab näha, kuidas üks käsitsi käivitatud töövoog käitub olemasoleva seisu peal.
 
 ## 4. Kontrolli, et teenused töötavad
 
@@ -547,7 +570,7 @@ http://localhost:8014/docs
   Tagastab ühe päeva tellimused.
   Parameeter `date` määrab loogilise kuupäeva.
   Parameeter `mode=stable` annab tavapärase vastuse.
-  Parameeter `mode=fail_once` on mõeldud `retry` demo jaoks.
+  Parameeter `mode=fail_once` on mõeldud `retry` proovimiseks.
 
 Tellimuste päringu kuju on:
 
@@ -568,12 +591,15 @@ Oodatav tulemus:
 Pane tähele ka seda:
 
 - valmis päevade puhul annab sama kuupäev alati sama tellimuste komplekti;
+- päevane sündmuste arv võib kuupäeviti veidi erineda, kuid jääb tavaliselt umbes saja ümber;
 - aktiivse äripäeva puhul sõltub vastus ka kellaajast;
-- `mode=fail_once` on mõeldud `retry` demo jaoks;
+- aktiivse äripäeva tellimused koonduvad rohkem õhtusse, umbes kella 18 ümbrusse, nii et praktikumi ajal näed tavaliselt uusi sündmusi juurde tulemas;
+- sama kuupäeva tulemus on siiski deterministlik ehk korduvatel päringutel sama, sest näiline juhuslikkus tuleb fikseeritud seemne loogikast;
+- `mode=fail_once` on mõeldud `retry` proovimiseks;
 - homse või veel hilisema kuupäeva kohta API vastust ei anna;
 - andmeallikas töötab ainult vahemikus, mida näed `health` vastusest.
 
-Selles praktikumis on aktiivne äripäev teadlikult fikseeritud.
+Selles praktikumis on aktiivne äripäev fikseeritud.
 See ei sõltu sinu arvuti päris tänasest kuupäevast.
 Seepärast käitub `run-scheduled` pärast ajalooliste päevade täitmist nii, nagu päris töövoog käituks "täna" jooksul: ta töötleb sama päeva uuesti üle, mitte ei loe seda kohe lõplikult valmis.
 
@@ -609,6 +635,13 @@ Oodatav tulemus:
 - `analytics.daily_product_sales`
 - `intermediate.orders_enriched`
 
+Kui `cron` on jõudnud juba mõne korra taustal käivituda, siis võivad mõned neist tabelitest selleks hetkeks ka ridu sisaldada. See on oodatav.
+
+Väike modelleerimise märkus:
+Selles näites kasutame dimensioonides ärivõtit ehk allikast tulevat tunnust `product_id` ja `store_id` otse võtmena.
+Surrogaatvõti tähendab süsteemi enda loodud tehnilist võtit, näiteks `product_key`.
+Päris projektides kasutatakse sageli surrogaatvõtit, kuid selle praktikumi väikeses näites hoiab ärivõti seosed lihtsamini jälgitavana.
+
 ## 7. Käivita töövoog käsitsi ühe päeva jaoks
 
 See samm tehakse hosti terminalis, aga töö jookseb scheduler'i konteineris.
@@ -627,7 +660,7 @@ Oodatav tulemus:
 
 - terminalis näed `load_products` ja `load_stores` logiridu;
 - `staging.pipeline_run_log` tabelisse tekivad nende sammude kohta `success` olekuga read;
-- tellimuste ega `analytics` kihi kohta selles käsus ridu ei teki.
+- see käsk ei lisa uusi tellimusi ega ehita ise `analytics` kihti, kuigi varasemad read võivad seal juba olemas olla, kui `cron` on enne seda jooksnud.
 
 Seejärel käivita viimase valmis päeva töövoog:
 
@@ -647,7 +680,11 @@ See käsk teeb kolm põhiasja:
 
 1. kontrollib, kas dimensioonid on olemas;
 2. pärib kohalikust `API`-st tellimused ja laeb need `staging.orders_raw` tabelisse;
-3. ehitab `analytics.daily_product_sales` tabelisse selle päeva koondtulemuse.
+3. ehitab `analytics.daily_product_sales` tabelisse selle päeva koondread uuesti.
+
+Oluline täpsustus: siin ei arvutata koondtulemust üle kõigi laetud päevade korraga.
+Iga käivitus kustutab ja ehitab uuesti ainult selle loogilise kuupäeva read, mida parajasti töötleme.
+See aitab hoida töövoo idempotentsena: sama päeva võib turvaliselt uuesti käivitada, ilma et koondread hakkaksid duplitseeruma.
 
 Kui tegid eelmise käsu juba ära, siis jäetakse dimensioonide laadimine siin vahele ja see logitakse olekuga `skipped`.
 
@@ -655,7 +692,8 @@ Oodatav tulemus:
 
 - terminalis näed sammude logiridu;
 - `staging.pipeline_run_log` tabelisse tekivad `success` olekuga read;
-- `analytics` kihis tekivad esimese päeva koondread.
+- valitud päeva koondread ehitatakse `analytics` kihis uuesti;
+- `analytics` kihis võivad selleks hetkeks olla juba ka teiste päevade koondread, kui `cron` on need vahepeal ära töödelnud.
 
 ## 8. Kontrolli tulemusi `SQL`-iga
 
@@ -866,12 +904,12 @@ docker compose exec scheduler crontab -l
 Sa peaksid nägema rida:
 
 ```text
-*/2 * * * * cd /app && /usr/local/bin/python /app/scripts/orchestrate.py run-scheduled >> /var/log/praktikum/pipeline.log 2>&1
+*/5 * * * * cd /app && /usr/local/bin/python /app/scripts/orchestrate.py run-scheduled >> /var/log/praktikum/pipeline.log 2>&1
 ```
 
 See tähendab:
 
-- käivita töö iga kahe minuti tagant;
+- käivita töö iga viie minuti tagant;
 - kirjuta väljund logifaili;
 - töötle korraga kas üks puudu jäänud valmis päev või aktiivne äripäev.
 
@@ -929,7 +967,7 @@ Selleks hetkeks peaksid sul olema järgmised asjad kontrollitud.
 - `source-api` vastab `/health` päringule.
 - Andmebaasis on skeemid `staging`, `intermediate` ja `analytics`.
 - Dimensioone saab vajadusel värskendada eraldi käsuga.
-- Üks käsikäivitus laeb tellimused ja päeva koondtulemuse.
+- Üks käsikäivitus laeb tellimused ja ehitab valitud päeva koondread uuesti.
 - Sama päeva korduskäivitus ei tekita duplikaate.
 - `fail_once` režiim tekitab vähemalt ühe ebaõnnestunud katse ja seejärel eduka katse.
 - `backfill` lisab puuduvaid päevi ilma ridu dubleerimata.
@@ -972,13 +1010,13 @@ Lahendus:
 
 Kui küsid kuupäeva, mis on aktiivsest äripäevast hilisem, siis katkestab töövoog kohe. Seda ei proovita `retry`-ga uuesti, sest tegu ei ole ajutise veaga.
 
-### Sümptom: `retry` demo ei näita enam esimest ebaõnnestunud katset
+### Sümptom: `retry` näide ei näita enam esimest ebaõnnestunud katset
 
 Tõenäoline põhjus: sama katse on selle scheduler'i töökorra jooksul juba korra läbi tehtud.
 
 Lahendus:
 
-- kasuta demo jaoks teist kuupäeva samast vahemikust;
+- kasuta selle proovimiseks teist kuupäeva samast vahemikust;
 - või taaskäivita praktikumi teenused käsuga `docker compose down` ja `docker compose up -d --build`.
 
 ### Sümptom: `crontab -l` töötab, aga logifail ei muutu
@@ -1020,25 +1058,47 @@ Oluline oli ka see, et sa oskaksid vastata järgmistele küsimustele:
 
 Kui need küsimused on kontrolli all, on sul juba esimene päris orkestreeritud töövoog olemas.
 
+Samas on sellel baastaseme töövool kaks teadlikku piiri.
+
+- Töövoog kogub logisid, kuid ei saada ise interaktiivseid veateavitusi.
+- Töövoog eeldab stabiilset skeemi ega halda skeemimuutusi automaatselt.
+
+Need teemad jätame järgmisteks sammudeks. Valikuliste lisaharjutuste juures saad nende üle juba edasi mõelda.
+
 ## Valikuline lisaharjutus
 
-Vali üks lisaharjutus või tee mõlemad.
+Lisaharjutused on iseseisvaks katsetamiseks ja mõtlemiseks. Neid ei pea esitama.
+
+Iga harjutuse kohta on olemas üks võimalik näidismõte failis [lisad/lisaharjutuste_naidislahendused.md](./lisad/lisaharjutuste_naidislahendused.md). See ei ole ametlik ainus õige vastus, vaid üks võimalik suund.
+
+Vali üks lisaharjutus või proovi mitut.
 
 1. Lisa töövoole üks lihtne kvaliteedikontroll.
 
-Näiteks tee `orchestrate.py` faili samm, mis kontrollib enne `analytics` kihi ehitamist:
+Mõtle, kuidas kontrollida enne `analytics` kihi ehitamist, kas kõik tellimuste `product_id` ja `store_id` väärtused leiduvad vastavates dimensioonides. Kui mõni võti ei sobitu, siis peaks töövoog selle logima ja arusaadavalt katkestama.
 
-- kas kõik tellimuste `product_id` väärtused leiduvad tootedimensioonis;
-- kas kõik tellimuste `store_id` väärtused leiduvad poedimensioonis.
+See mõte jätkab eelmise praktikumi võtmete sobivuse kontrolli loogikat. Võid meenutada [Praktikum 3 võtmekontrolli lisaülesannet](../../03-andmete-integreerimine/baastase/README.md#lisaulesanne-5-kontrolli-kas-uhendusvotmed-allikate-vahel-pariselt-sobituvad) ja vaadata ka faili [lisa_04_check_join_keys.py](../../03-andmete-integreerimine/baastase/scripts/lisa_04_check_join_keys.py).
 
-Kui mõni võti ei sobitu, siis:
+Võid mõelda sellest näiteks nii:
 
-- kirjuta selle kohta rida `staging.pipeline_run_log` tabelisse;
-- katkesta töövoog arusaadava veateatega.
+```text
+loe tellimustest kõik product_id väärtused selle päeva kohta
+loe tellimustest kõik store_id väärtused selle päeva kohta
 
-See aitab näha, et orkestreerimine ei tähenda ainult ajastust. See tähendab ka teadlikku otsust, millal töö peab jätkuma ja millal peatuma.
+leia, millised product_id väärtused puuduvad tabelist staging.products_raw
+leia, millised store_id väärtused puuduvad tabelist staging.stores_raw
+
+kui vähemalt üks puuduv võti leidub:
+    kirjuta logitabelisse veateade
+    katkesta töövoog enne analytics kihi ehitamist
+muidu:
+    jätka analytics kihi ehitamist
+```
 
 2. Lisa `scheduler/crontab` faili teine rida, mis värskendab dimensioone kord kuus pärast inventuuri.
+
+Mõtle, miks võiks see töö joosta eraldi igapäevasest tellimuste torust ja miks võiks kord kuus olla selles näites piisav.
+Mõtle juurde ka sellele, millise aeglaselt muutuva dimensiooni ehk `slowly changing dimension` tüübi moodi see praktikum praegu käitub.
 
 Näiteks võid kasutada sellist ajastust:
 
@@ -1048,7 +1108,17 @@ Näiteks võid kasutada sellist ajastust:
 
 See rida tähendaks: iga kuu 1. päeval kell 03:15 käivita ainult dimensioonide värskendus.
 
-Mõtle juurde, miks võiks see töö joosta eraldi igapäevasest tellimuste torust ja miks piisab siin näiteks kord kuus käivitamisest.
+3. Mõtle läbi interaktiivne veateavitus.
+
+Interaktiivne teavitus tähendab seda, et süsteem annab inimesele ise märku, kui midagi läheb valesti. Näiteks võib see olla e-kiri, Slacki sõnum või `webhook` ehk automaatne päring teise süsteemi teavitamiseks.
+
+Mõtle, millal peaks töövoog teavituse saatma, millist infot peaks teade sisaldama ja kuidas vältida sama vea korduvaid topeltteavitusi.
+
+4. Mõtle läbi skeemimuutuste idempotentne haldus.
+
+Migratsioon on kontrollitud skeemimuutus, mis viiakse andmebaasis läbi eraldi sammuna. Mõtle, kuidas lisada uus tulp või muu skeemimuutus nii, et töövoog jääks tööle ka siis, kui sama migratsiooni sammu või skeemimuutust on vaja uuesti rakendada.
+
+Mõtle ka sellele, miks ainult `init/01_create_objects.sql` faili muutmine ei aita olemasoleva andmemahu korral, mida saab `run-scheduled` pärast muudatust veel ise teha ja milline peaks olema see osa, mille teed kasutajana ühe korra käsitsi ära.
 
 ## Koristamine
 

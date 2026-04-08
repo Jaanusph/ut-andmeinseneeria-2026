@@ -6,13 +6,14 @@ Miks see on kasulik?
 
 - me ei sõltu välistest teenustest;
 - sama kuupäev annab alati sama vastuse;
-- saame teadlikult simuleerida ajutist tõrget `fail_once`, et retry loogikat testida.
+- saame simuleerida ajutist tõrget `fail_once`, et retry loogikat proovida.
 """
 
 from __future__ import annotations
 
 import json
 import os
+from math import cos, log, pi, sqrt
 from datetime import date, datetime, timedelta
 from hashlib import sha256
 from http.server import BaseHTTPRequestHandler, HTTPServer
@@ -31,6 +32,14 @@ SOURCE_BUSINESS_DATE = date.fromisoformat(
 )
 # Hoidame allika kuupäevakonteksti faili alguses koos.
 # Nii on lihtsam näha, millist "ärilist tänast päeva" server parajasti simuleerib.
+SEED_PREFIX = "praktikum-04-base-source-api"
+AVERAGE_ORDERS_PER_DAY = 100
+ORDERS_PER_DAY_STDDEV = 10
+ORDER_COUNT_MIN = 60
+ORDER_COUNT_MAX = 140
+ORDER_TIME_MEAN_MINUTES = 18 * 60
+ORDER_TIME_STDDEV_MINUTES = 2 * 60
+MINUTES_PER_DAY = 24 * 60
 FAIL_ONCE_DIR = Path("/tmp/source_api_fail_once")
 FAIL_ONCE_DIR.mkdir(parents=True, exist_ok=True)
 
@@ -51,13 +60,40 @@ STORES = [
 def stable_int(seed: str, minimum: int, maximum: int) -> int:
     """Loo sisendist alati sama täisarv etteantud vahemikus.
 
-    See on selle faili peamine nipp.
     Sama `seed` annab alati sama tulemuse. Nii saame teha "näiliselt juhuslikke"
     andmeid, mis on igal samal kuupäeval täpselt ühesugused.
     """
     span = maximum - minimum + 1
-    value = int(sha256(seed.encode("utf-8")).hexdigest()[:8], 16)
+    seeded_text = f"{SEED_PREFIX}|{seed}"
+    value = int(sha256(seeded_text.encode("utf-8")).hexdigest()[:8], 16)
     return minimum + (value % span)
+
+
+def stable_fraction(seed: str) -> float:
+    """Loo sisendist alati sama murdarv vahemikus 0 kuni 1.
+
+    Seda kasutame siis, kui tahame teha mitte ainult täisarve, vaid ka
+    "juhusliku" kujuga jaotusi, mis jäävad siiski sama kuupäeva jaoks
+    alati samaks.
+    """
+    seeded_text = f"{SEED_PREFIX}|{seed}"
+    value = int(sha256(seeded_text.encode("utf-8")).hexdigest()[:16], 16)
+    max_value = 16**16
+    # Lisame 0.5, et tulemus ei oleks kunagi täpselt 0 ega täpselt 1.
+    return (value + 0.5) / max_value
+
+
+def stable_gaussian(seed: str, mean: float, stddev: float) -> float:
+    """Loo sisendist alati sama normaaljaotusega väärtus.
+
+    Siin kasutame Box-Mulleri teisendust.
+    Mõte on lihtne: kahest deterministlikust murdarvust saame teha arvu,
+    mis käitub rohkem päris juhusliku normaaljaotusega väärtuse moodi.
+    """
+    u1 = stable_fraction(f"{seed}|u1")
+    u2 = stable_fraction(f"{seed}|u2")
+    z0 = sqrt(-2.0 * log(u1)) * cos(2.0 * pi * u2)
+    return mean + (stddev * z0)
 
 
 def pick_product(logical_date: date, order_no: int) -> dict:
@@ -72,25 +108,57 @@ def pick_store(logical_date: date, order_no: int) -> dict:
     return STORES[index]
 
 
+def get_order_count(logical_date: date) -> int:
+    """Leia ühe päeva sündmuste arv.
+
+    Päevane maht kõigub veidi, aga jääb enamasti umbes saja juurde.
+    Kasutame siin kitsamat normaaljaotust, et päevad ei oleks kõik täpselt
+    sama suurusega, kuid erinevus jääks mõistlikku vahemikku.
+    """
+    count = round(
+        stable_gaussian(
+            f"{logical_date.isoformat()}|order_count",
+            AVERAGE_ORDERS_PER_DAY,
+            ORDERS_PER_DAY_STDDEV,
+        )
+    )
+    return max(ORDER_COUNT_MIN, min(ORDER_COUNT_MAX, count))
+
+
 def build_orders(logical_date: date) -> list[dict]:
     """Ehita ühe päeva tellimuste loend.
 
-    Tulemuses on kuus tellimust. Väärtused ei ole päris juhuslikud, vaid
-    arvutatakse välja nii, et sama kuupäev annaks alati sama tulemuse.
+    Päevane müügisündmuste arv võib veidi muutuda. Väärtused ei ole päris
+    juhuslikud, vaid arvutatakse välja nii, et sama kuupäev annaks alati
+    sama tulemuse.
 
     `source_updated_at` kirjutame Tallinna ajavööndis. Nii on aktiivse päeva
     "mis on juba nähtav?" loogikat õppijale lihtsam jälgida.
+    Kellaaegade puhul kasutame normaaljaotust keskväärtusega 18:00 ja
+    standardhälbega 2 tundi. See tähendab, et sündmused koonduvad rohkem
+    õhtusse, nagu e-poe puhul päriselus tihti juhtub.
     """
-    orders = []
+    planned_order_count = get_order_count(logical_date)
+    raw_orders = []
     # `for` loob siia loendisse ühe tellimuse korraga.
-    for order_no in range(1, 7):
+    for order_no in range(1, planned_order_count + 1):
         product = pick_product(logical_date, order_no)
         store = pick_store(logical_date, order_no)
         quantity = stable_int(f"{logical_date.isoformat()}|quantity|{order_no}", 1, 5)
         cents_step = stable_int(f"{logical_date.isoformat()}|price|{order_no}", 0, 6)
         unit_price = round(product["base_price_eur"] + (cents_step * 0.5), 2)
-        update_hour = stable_int(f"{logical_date.isoformat()}|hour|{order_no}", 7, 18)
-        update_minute = stable_int(f"{logical_date.isoformat()}|minute|{order_no}", 0, 59)
+        # Rakendame jaotust ainult kellaajale.
+        # Kui väärtus läheb üle südaöö või enne päeva algust, keerame selle
+        # modulo abil sama kuupäeva sisse tagasi.
+        minute_of_day = round(
+            stable_gaussian(
+                f"{logical_date.isoformat()}|order_time|{order_no}",
+                ORDER_TIME_MEAN_MINUTES,
+                ORDER_TIME_STDDEV_MINUTES,
+            )
+        ) % MINUTES_PER_DAY
+        update_hour = minute_of_day // 60
+        update_minute = minute_of_day % 60
         source_updated_at = datetime(
             logical_date.year,
             logical_date.month,
@@ -99,15 +167,39 @@ def build_orders(logical_date: date) -> list[dict]:
             update_minute,
             tzinfo=TALLINN_TZ,
         )
-        orders.append(
+        raw_orders.append(
             {
-                "order_id": f"ORD-{logical_date.strftime('%Y%m%d')}-{order_no:03d}",
                 "order_date": logical_date.isoformat(),
                 "store_id": store["store_id"],
                 "product_id": product["product_id"],
                 "quantity": quantity,
                 "unit_price_eur": unit_price,
                 "source_updated_at": source_updated_at.isoformat(),
+                "_event_no": order_no,
+            }
+        )
+
+    # Sorteerime sündmused kellaaja järgi, et API vastus näeks loomulikum välja.
+    raw_orders.sort(
+        key=lambda order: (
+            order["source_updated_at"],
+            order["store_id"],
+            order["product_id"],
+            order["_event_no"],
+        )
+    )
+
+    orders = []
+    for order_no, raw_order in enumerate(raw_orders, start=1):
+        orders.append(
+            {
+                "order_id": f"ORD-{logical_date.strftime('%Y%m%d')}-{order_no:03d}",
+                "order_date": raw_order["order_date"],
+                "store_id": raw_order["store_id"],
+                "product_id": raw_order["product_id"],
+                "quantity": raw_order["quantity"],
+                "unit_price_eur": raw_order["unit_price_eur"],
+                "source_updated_at": raw_order["source_updated_at"],
             }
         )
     return orders
@@ -163,7 +255,6 @@ class RequestHandler(BaseHTTPRequestHandler):
     def _build_docs_page(self) -> str:
         """Ehita brauseris loetav lühidokumentatsioon.
 
-        See leht ei ole täismahuline `OpenAPI` lahendus.
         Eesmärk on anda õppijale üks lihtne koht, kust on näha:
 
         - millised teed teenusel olemas on;
@@ -219,8 +310,9 @@ class RequestHandler(BaseHTTPRequestHandler):
         <li><strong>Andmeid alates:</strong> {SOURCE_START_DATE.isoformat()}</li>
         <li><strong>Andmeid kuni:</strong> {SOURCE_END_DATE.isoformat()}</li>
         <li><strong>Aktiivne äripäev:</strong> {SOURCE_BUSINESS_DATE.isoformat()}</li>
-        <li><strong>Ärikell praegu:</strong> {business_now.isoformat()}</li>
+        <li><strong>Ärikell:</strong> {business_now.isoformat()}</li>
         <li><strong>Valmis päevad kuni:</strong> {finalized_through.isoformat() if finalized_through else "puudub"}</li>
+        <li><strong>Sündmusi aktiivsel päeval kokku:</strong> {get_order_count(SOURCE_BUSINESS_DATE)}</li>
       </ul>
     </div>
 
@@ -242,14 +334,16 @@ class RequestHandler(BaseHTTPRequestHandler):
       <ul>
         <li><code>date</code> on loogiline kuupäev kujul <code>YYYY-MM-DD</code>.</li>
         <li><code>mode=stable</code> tagastab tavapärase vastuse.</li>
-        <li><code>mode=fail_once</code> tekitab esimesel katsel ajutise vea ja sobib <code>retry</code> demo jaoks.</li>
+        <li><code>mode=fail_once</code> tekitab esimesel katsel ajutise vea ja sobib <code>retry</code> proovimiseks.</li>
+        <li>Päevane sündmuste arv kõigub veidi, aga jääb tavaliselt umbes saja ümber.</li>
+        <li>Aktiivse äripäeva puhul lisanduvad tellimused päeva jooksul vastusesse järk-järgult ja koonduvad rohkem õhtusse.</li>
       </ul>
 
       <p>Näited:</p>
       <ul>
         <li><a href="/api/orders?date={example_date.isoformat()}&amp;mode=stable">Valmis päeva tellimused</a></li>
         <li><a href="/api/orders?date={SOURCE_BUSINESS_DATE.isoformat()}&amp;mode=stable">Aktiivse äripäeva tellimused</a></li>
-        <li><a href="/api/orders?date={example_date.isoformat()}&amp;mode=fail_once">Retry demo näide</a></li>
+        <li><a href="/api/orders?date={example_date.isoformat()}&amp;mode=fail_once">Ajutise vea näide</a></li>
       </ul>
     </div>
   </body>
